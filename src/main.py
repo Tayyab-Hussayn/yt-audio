@@ -33,49 +33,6 @@ class YouTubeAudioCLI:
         self.ui = PlayerUI()
         self.running = True
         self.current_volume = 70
-        self.keyboard_listener = None
-        
-    def setup_keyboard_listener(self):
-        """Setup non-blocking keyboard listener"""
-        try:
-            from pynput import keyboard
-            
-            def on_press(key):
-                try:
-                    if key == keyboard.Key.space:
-                        self.player.pause()
-                        state = self.player.get_state()
-                        self.ui.console.print(f"\n[yellow]● {state.upper()}[/yellow]")
-                    elif key.char == 'q':
-                        self.ui.console.print("\n[red]Quitting...[/red]")
-                        self.running = False
-                        self.player.stop()
-                    elif key.char == 'n':
-                        self.ui.console.print("\n[blue]Stopping current track...[/blue]")
-                        self.player.stop()
-                    elif key.char == '+' or key.char == '=':
-                        self.current_volume = min(100, self.current_volume + 10)
-                        self.player.set_volume(self.current_volume)
-                        self.ui.console.print(f"\n[cyan]🔊 Volume: {self.current_volume}%[/cyan]")
-                    elif key.char == '-':
-                        self.current_volume = max(0, self.current_volume - 10)
-                        self.player.set_volume(self.current_volume)
-                        self.ui.console.print(f"\n[cyan]🔊 Volume: {self.current_volume}%[/cyan]")
-                except AttributeError:
-                    # Special keys (like space) don't have char attribute
-                    pass
-                except Exception as e:
-                    # Ignore keyboard errors to prevent crashes
-                    pass
-            
-            # Start the keyboard listener
-            self.keyboard_listener = keyboard.Listener(on_press=on_press)
-            self.keyboard_listener.start()
-            return True
-            
-        except ImportError:
-            self.ui.console.print("[yellow]Warning: pynput not available, keyboard controls disabled[/yellow]")
-            return False
         
     def signal_handler(self, signum, frame):
         """Handle Ctrl+C gracefully"""
@@ -86,64 +43,46 @@ class YouTubeAudioCLI:
     def cleanup(self):
         """Clean up resources"""
         self.running = False
-        if hasattr(self, 'keyboard_listener') and self.keyboard_listener:
-            self.keyboard_listener.stop()
         self.player.cleanup()
     
     def monitor_playback(self):
         """Monitor playback progress in background thread"""
-        last_update = 0
         while self.running:
-            state = self.player.get_state()
-            
-            if state == 'playing':
+            if self.player.get_state() == 'playing':
                 current_time = self.player.get_time()
                 total_time = self.player.get_length()
+                position = self.player.get_position()
                 
-                # Update every 2 seconds to avoid spam
-                if time.time() - last_update > 2:
-                    if total_time > 0:
-                        position = current_time / total_time
-                        progress_bar = "█" * int(position * 30) + "░" * (30 - int(position * 30))
-                        time_str = f"{self.ui.format_time(current_time)} / {self.ui.format_time(total_time)}"
-                        
-                        # Clear line and show progress
-                        print(f"\r[{progress_bar}] {time_str} - {state}", end="", flush=True)
-                        last_update = time.time()
-                        
-            elif state == 'ended':
-                print(f"\n[green]✅ Playback finished![/green]")
-                self.running = False
-                break
-            elif state == 'error':
-                print(f"\n[red]❌ Playback error[/red]")
-                break
+                if total_time > 0:
+                    # Update the UI with progress
+                    self.ui.update_progress(current_time, total_time, position)
                 
-            time.sleep(1)
-    
-    def handle_keyboard_input(self):
-        """Display control instructions (keyboard listener handles actual input)"""
-        if hasattr(self, 'keyboard_listener') and self.keyboard_listener:
-            self.ui.console.print("\n[dim]Keyboard controls active: [Space]=Play/Pause [Q]=Quit [N]=Next [+/-]=Volume[/dim]")
-        else:
-            # Fallback to old method if pynput isn't available
-            try:
-                while self.running and self.player.get_state() not in ['stopped', 'ended']:
-                    self.ui.console.print("\n[dim]Press 'p' to pause/play, 'q' to quit, 'n' for next:[/dim]")
-                    user_input = input().lower().strip()
+                # Check if playback ended
+                if self.player.get_state() == 'ended':
+                    self.ui.console.print("\n[green]✅ Playback finished![/green]")
+                    break
                     
-                    if user_input == 'p':
-                        self.player.pause()
-                        state = self.player.get_state()
-                        self.ui.show_state(state)
-                    elif user_input == 'q':
-                        self.running = False
-                        break
-                    elif user_input == 'n':
-                        self.player.stop()
-                        break
-            except KeyboardInterrupt:
-                self.running = False
+            time.sleep(2)  # Update every 2 seconds to avoid too frequent refreshes
+    
+    def handle_text_input(self):
+        """Handle basic text input controls"""
+        try:
+            while self.running and self.player.get_state() not in ['stopped', 'ended']:
+                self.ui.console.print("\n[dim]Press 'p' to pause/play, 'q' to quit, 'n' for next:[/dim]")
+                user_input = input().lower().strip()
+                
+                if user_input == 'p':
+                    self.player.pause()
+                    state = self.player.get_state()
+                    self.ui.show_state(state)
+                elif user_input == 'q':
+                    self.running = False
+                    break
+                elif user_input == 'n':
+                    self.player.stop()
+                    break
+        except KeyboardInterrupt:
+            self.running = False
     
     def play_url(self, url: str) -> bool:
         """Play a single YouTube URL"""
@@ -179,23 +118,15 @@ class YouTubeAudioCLI:
             # Show now playing info
             self.ui.clear()
             self.ui.show_now_playing(audio_info['title'], audio_info.get('uploader', 'Unknown'))
-            self.ui.show_controls()
-            self.ui.show_volume(self.current_volume)
             self.ui.print_separator()
-            
-            # Setup keyboard controls
-            controls_available = self.setup_controls()
             
             # Start monitoring thread
             monitor_thread = threading.Thread(target=self.monitor_playback, daemon=True)
             monitor_thread.start()
             
-            # Start keyboard controls
-            input_thread = threading.Thread(target=self.handle_keyboard_input, daemon=True)
+            # Start input thread for basic text controls
+            input_thread = threading.Thread(target=self.handle_text_input, daemon=True)
             input_thread.start()
-            
-            if controls_available:
-                self.ui.console.print("[green]✅ Press any key to control playback![/green]")
             
             # Wait for playback to finish or user to quit
             while self.running and self.player.get_state() not in ['stopped', 'ended', 'error']:
@@ -247,7 +178,7 @@ class YouTubeAudioCLI:
         
         finally:
             self.cleanup()
-            self.ui.console.print("[green]Thanks for using YouTube Audio Player![/green]")
+            self.ui.show_goodbye()
 
 
 @click.command()

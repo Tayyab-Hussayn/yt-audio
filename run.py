@@ -2,11 +2,14 @@
 
 import sys
 import os
+import runpy
 
-# Add the src directory to Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
+# Add the project's root directory to the Python path, not just 'src'
+# This helps Python understand the project structure.
+project_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, project_root)
 
-from main import main
+# Use runpy to execute the 'main' module from the 'src' package
+# This correctly handles relative imports within the 'src' package.
+runpy.run_module('src.main', run_name='__main__')
 
-if __name__ == "__main__":
-    main()
