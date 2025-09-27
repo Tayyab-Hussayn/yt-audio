@@ -16,12 +16,23 @@ class AudioPlayer:
     def load_stream(self, stream_url: str, media_info: Dict) -> bool:
         """Load audio stream for playback"""
         try:
-            media = self.instance.media_new(stream_url)
+            # If we have the original URL, try to use it directly with VLC
+            original_url = media_info.get('original_url', stream_url)
+            
+            # VLC can sometimes handle YouTube URLs directly
+            if original_url.startswith('http') and 'youtube.com' in original_url:
+                media = self.instance.media_new(original_url)
+            else:
+                media = self.instance.media_new(stream_url)
+                
             self.player.set_media(media)
             self.current_media_info = media_info
+            
+            print(f"VLC loaded stream: {media_info.get('title', 'Unknown')}")
             return True
+            
         except Exception as e:
-            print(f"Error loading stream: {str(e)}")
+            print(f"Error loading stream with VLC: {str(e)}")
             return False
     
     def play(self) -> bool:
